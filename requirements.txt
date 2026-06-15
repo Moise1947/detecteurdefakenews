@@ -1,0 +1,24 @@
+# ── Framework web ────────────────────────────
+flask==3.0.3
+flask-cors==4.0.1
+flask-limiter==3.7.0          # Rate limiting HTTP
+flask-talisman==1.1.0         # Headers de sécurité (CSP, HSTS, X-Frame…)
+
+# ── Authentification & sécurité ──────────────
+bcrypt==4.1.3                 # Hachage des mots de passe (jamais MD5/SHA1)
+itsdangerous==2.2.0           # Tokens signés HMAC (sessions, CSRF)
+cryptography==42.0.8          # Primitives crypto
+
+# ── Base de données ───────────────────────────
+mysql-connector-python==8.4.0
+
+# ── API Claude ────────────────────────────────
+anthropic==0.28.0
+
+# ── Validation des entrées ────────────────────
+bleach==6.1.0                 # Nettoyage HTML (anti-XSS)
+validators==0.28.3            # Validation URL, email…
+python-dotenv==1.0.1
+
+# ── Logging sécurisé ─────────────────────────
+python-json-logger==2.0.7

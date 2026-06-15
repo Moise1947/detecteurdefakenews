@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--
+  Sécurités front-end :
+  • Pas de eval(), innerHTML sur données brutes, ni document.write
+  • Toutes les données venant du serveur passent par textContent
+  • Pas de CDN externe pour les scripts (CSP 'self')
+  • Pas de formulaires sans validation côté client
+  • Limite de taille appliquée côté JS avant envoi
+-->
+<title>VériNews — Détecteur de Fake News</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Karla:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0c10;--surface:#111318;--border:rgba(255,255,255,.07);
+  --text:#e8eaf0;--muted:#6b7280;--accent:#4f8cff;
+  --vrai:#22c55e;--faux:#ef4444;--douteux:#f59e0b;--incertain:#a78bfa;
+  --radius:14px;--shadow:0 8px 40px rgba(0,0,0,.55);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Karla',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+}
+.container{max-width:900px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+
+/* ── HEADER ── */
+header{padding:48px 0 32px;display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--border)}
+.logo-icon{width:48px;height:48px;background:linear-gradient(135deg,#4f8cff,#a78bfa);border-radius:12px;display:grid;place-items:center;font-size:22px;flex-shrink:0}
+.logo-text h1{font-family:'Syne',sans-serif;font-size:clamp(22px,4vw,30px);font-weight:800;letter-spacing:-.5px}
+.logo-text span{font-size:13px;color:var(--muted);letter-spacing:.5px;font-weight:300}
+
+/* ── STATS ── */
+.stats-bar{display:flex;gap:12px;flex-wrap:wrap;padding:20px 0;border-bottom:1px solid var(--border)}
+.stat-chip{background:var(--surface);border:1px solid var(--border);border-radius:50px;padding:6px 16px;font-size:13px;display:flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot-v{background:var(--vrai)}.dot-f{background:var(--faux)}.dot-d{background:var(--douteux)}.dot-i{background:var(--incertain)}
+
+/* ── FORM ── */
+.analyse-section{padding:32px 0}
+.analyse-section h2{font-family:'Syne',sans-serif;font-size:18px;font-weight:700;margin-bottom:20px}
+.form-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow)}
+.input-group{margin-bottom:18px}
+.input-group label{display:block;font-size:12px;font-weight:500;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.input-group input,.input-group textarea{
+  width:100%;background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-family:'Karla',sans-serif;font-size:15px;
+  padding:12px 16px;transition:border .2s,box-shadow .2s;outline:none;resize:vertical
+}
+.input-group input:focus,.input-group textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,140,255,.15)}
+.input-group textarea{min-height:140px}
+.char-counter{font-size:11px;color:var(--muted);text-align:right;margin-top:4px}
+.char-counter.warn{color:var(--douteux)}
+.char-counter.over{color:var(--faux)}
+.field-error{font-size:12px;color:var(--faux);margin-top:4px;display:none}
+
+.btn-analyse{
+  width:100%;background:linear-gradient(135deg,#4f8cff,#a78bfa);
+  color:#fff;border:none;border-radius:10px;font-family:'Syne',sans-serif;
+  font-size:15px;font-weight:700;padding:14px;cursor:pointer;
+  transition:opacity .2s,transform .15s;letter-spacing:.3px
+}
+.btn-analyse:hover{opacity:.88}.btn-analyse:active{transform:scale(.98)}
+.btn-analyse:disabled{opacity:.45;cursor:not-allowed}
+
+/* ── LOADING ── */
+.loading{display:none;text-align:center;padding:32px}
+.loading.active{display:block}
+.spinner{width:44px;height:44px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading p{color:var(--muted);font-size:14px}
+
+/* ── RÉSULTAT ── */
+.resultat{display:none;margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;animation:fadeUp .4s ease}
+.resultat.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.verdict-banner{padding:20px 28px;display:flex;align-items:center;gap:16px}
+.verdict-badge{font-family:'Syne',sans-serif;font-weight:800;font-size:13px;letter-spacing:1px;padding:6px 16px;border-radius:50px;text-transform:uppercase}
+.score-wrap{margin-left:auto;text-align:right}
+.score-label{font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase}
+.score-value{font-family:'Syne',sans-serif;font-size:28px;font-weight:800}
+.resultat-body{padding:0 28px 28px}
+.progress-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.06);margin-bottom:24px;overflow:hidden}
+.progress-fill{height:100%;border-radius:3px;transition:width .8s cubic-bezier(.4,0,.2,1)}
+.explication{font-size:15px;line-height:1.7;color:#c8cdd8;margin-bottom:24px}
+.tags-section{margin-bottom:20px}
+.tags-section h4{font-size:11px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.tags{display:flex;flex-wrap:wrap;gap:8px}
+.tag{font-size:12px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:#9ca3af}
+
+/* ── HISTORIQUE ── */
+.historique-section{padding:0 0 48px}
+.historique-section h2{font-family:'Syne',sans-serif;font-size:18px;font-weight:700;margin-bottom:20px}
+.history-list{display:flex;flex-direction:column;gap:10px}
+.history-item{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:16px}
+.history-verdict{font-family:'Syne',sans-serif;font-size:11px;font-weight:700;letter-spacing:.8px;padding:4px 12px;border-radius:50px;flex-shrink:0}
+.history-text{flex:1;font-size:13px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.history-date{font-size:11px;color:var(--muted);flex-shrink:0}
+.history-score{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;flex-shrink:0;width:40px;text-align:right}
+.empty-state{text-align:center;padding:40px;color:var(--muted);font-size:14px}
+.alert-error{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px 16px;color:var(--faux);font-size:14px;margin-top:12px}
+
+@media(max-width:600px){
+  .stats-bar{gap:8px}
+  .form-card{padding:20px}
+  .verdict-banner{flex-wrap:wrap}
+  .score-wrap{margin-left:0}
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo-icon" aria-hidden="true">🔍</div>
+    <div class="logo-text">
+      <h1>VériNews</h1>
+      <span>Détecteur de Fake News propulsé par l'IA</span>
+    </div>
+  </header>
+
+  <div class="stats-bar" role="status" aria-live="polite">
+    <div class="stat-chip"><span class="dot dot-v" aria-hidden="true"></span><span id="statTotal">— analyses</span></div>
+    <div class="stat-chip"><span class="dot dot-v" aria-hidden="true"></span><span id="statVrai">— Vrais</span></div>
+    <div class="stat-chip"><span class="dot dot-f" aria-hidden="true"></span><span id="statFaux">— Faux</span></div>
+    <div class="stat-chip"><span class="dot dot-d" aria-hidden="true"></span><span id="statDouteux">— Douteux</span></div>
+    <div class="stat-chip"><span class="dot dot-i" aria-hidden="true"></span><span id="statIncertain">— Incertains</span></div>
+  </div>
+
+  <section class="analyse-section">
+    <h2>📋 Analyser un article ou texte</h2>
+    <div class="form-card">
+
+      <div class="input-group">
+        <label for="inputTitre">Titre de l'article (optionnel)</label>
+        <input type="text" id="inputTitre" maxlength="500"
+               placeholder="Ex : Le gouvernement annonce…"
+               autocomplete="off" spellcheck="true">
+      </div>
+
+      <div class="input-group">
+        <label for="inputContenu">Contenu à analyser <span aria-hidden="true">*</span></label>
+        <textarea id="inputContenu" maxlength="8000"
+                  placeholder="Collez ici le texte à vérifier…"
+                  aria-required="true" spellcheck="true"></textarea>
+        <div class="char-counter" id="charCounter">0 / 8000 caractères</div>
+        <div class="field-error" id="contenuError" role="alert"></div>
+      </div>
+
+      <div class="input-group">
+        <label for="inputUrl">URL source (optionnel)</label>
+        <input type="url" id="inputUrl" maxlength="2048"
+               placeholder="https://…"
+               autocomplete="off">
+        <div class="field-error" id="urlError" role="alert"></div>
+      </div>
+
+      <button class="btn-analyse" id="btnAnalyser" type="button">
+        🔎 Analyser maintenant
+      </button>
+      <div id="alertError" class="alert-error" role="alert" style="display:none"></div>
+    </div>
+
+    <div class="loading" id="loading" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <p>Analyse en cours par l'IA… Veuillez patienter</p>
+    </div>
+
+    <div class="resultat" id="resultat" role="region" aria-label="Résultat de l'analyse">
+      <div class="verdict-banner" id="verdictBanner">
+        <span class="verdict-badge" id="verdictBadge"></span>
+        <div class="score-wrap">
+          <div class="score-label">Confiance</div>
+          <div class="score-value" id="scoreValue"></div>
+        </div>
+      </div>
+      <div class="resultat-body">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <p class="explication" id="explication"></p>
+        <div class="tags-section" id="pointsSection">
+          <h4>⚠️ Points suspects détectés</h4>
+          <div class="tags" id="pointsTags"></div>
+        </div>
+        <div class="tags-section" id="sourcesSection">
+          <h4>📚 Sources recommandées</h4>
+          <div class="tags" id="sourcesTags"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="historique-section">
+    <h2>🕒 Analyses récentes</h2>
+    <div class="history-list" id="historyList">
+      <div class="empty-state">Chargement…</div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ════════════════════════════════════════════
+   CONSTANTES
+   ════════════════════════════════════════════ */
+const MAX_CONTENU = 8000;
+const MAX_TITRE   = 500;
+const MAX_URL     = 2048;
+
+const COLORS = {
+  VRAI:     { fill:"#22c55e", bg:"rgba(34,197,94,.15)",   border:"rgba(34,197,94,.3)"  },
+  FAUX:     { fill:"#ef4444", bg:"rgba(239,68,68,.15)",   border:"rgba(239,68,68,.3)"  },
+  DOUTEUX:  { fill:"#f59e0b", bg:"rgba(245,158,11,.15)",  border:"rgba(245,158,11,.3)" },
+  INCERTAIN:{ fill:"#a78bfa", bg:"rgba(167,139,250,.15)", border:"rgba(167,139,250,.3)"},
+};
+
+const EMOJI = { VRAI:"✅", FAUX:"❌", DOUTEUX:"⚠️", INCERTAIN:"❓" };
+const VERDICTS_VALIDES = new Set(["VRAI","FAUX","DOUTEUX","INCERTAIN"]);
+
+/* ════════════════════════════════════════════
+   UTILITAIRES DE SÉCURITÉ FRONT-END
+   ════════════════════════════════════════════ */
+
+/**
+ * Crée un élément texte (jamais innerHTML) — anti-XSS.
+ * Toutes les données utilisateur ou serveur passent par là.
+ */
+function texte(str) {
+  return document.createTextNode(String(str));
+}
+
+/** Crée un <span> avec textContent safe. */
+function span(cls, str) {
+  const el = document.createElement("span");
+  el.className = cls;
+  el.appendChild(texte(str));
+  return el;
+}
+
+/** Valide une URL côté client (avant envoi). */
+function isValidUrl(url) {
+  if (!url) return true; // optionnel
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch { return false; }
+}
+
+/** Affiche une erreur inline sur un champ. */
+function showFieldError(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.style.display = "block";
+}
+
+function clearFieldError(id) {
+  const el = document.getElementById(id);
+  el.textContent = "";
+  el.style.display = "none";
+}
+
+function showAlert(msg) {
+  const el = document.getElementById("alertError");
+  el.textContent = msg; // textContent, jamais innerHTML
+  el.style.display = "block";
+}
+
+function clearAlert() {
+  const el = document.getElementById("alertError");
+  el.textContent = "";
+  el.style.display = "none";
+}
+
+/* ════════════════════════════════════════════
+   COMPTEUR DE CARACTÈRES
+   ════════════════════════════════════════════ */
+document.getElementById("inputContenu").addEventListener("input", function() {
+  const n   = this.value.length;
+  const ctr = document.getElementById("charCounter");
+  ctr.textContent = `${n} / ${MAX_CONTENU} caractères`;
+  ctr.className = n > MAX_CONTENU ? "char-counter over"
+                : n > MAX_CONTENU * 0.9 ? "char-counter warn"
+                : "char-counter";
+});
+
+/* ════════════════════════════════════════════
+   VALIDATION AVANT ENVOI
+   ════════════════════════════════════════════ */
+function validerFormulaire(contenu, url) {
+  let ok = true;
+
+  clearFieldError("contenuError");
+  clearFieldError("urlError");
+  clearAlert();
+
+  if (contenu.length < 20) {
+    showFieldError("contenuError", "Le texte doit contenir au moins 20 caractères.");
+    ok = false;
+  }
+  if (contenu.length > MAX_CONTENU) {
+    showFieldError("contenuError", `Le texte dépasse ${MAX_CONTENU} caractères.`);
+    ok = false;
+  }
+  if (url && !isValidUrl(url)) {
+    showFieldError("urlError", "L'URL n'est pas valide (doit commencer par http:// ou https://).");
+    ok = false;
+  }
+  return ok;
+}
+
+/* ════════════════════════════════════════════
+   ANALYSE
+   ════════════════════════════════════════════ */
+async function lancerAnalyse() {
+  const contenu = document.getElementById("inputContenu").value.trim();
+  const titre   = document.getElementById("inputTitre").value.trim().slice(0, MAX_TITRE);
+  const url     = document.getElementById("inputUrl").value.trim().slice(0, MAX_URL);
+
+  if (!validerFormulaire(contenu, url)) return;
+
+  document.getElementById("btnAnalyser").disabled = true;
+  document.getElementById("loading").classList.add("active");
+  document.getElementById("resultat").classList.remove("active");
+
+  try {
+    const resp = await fetch("/api/analyser", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // On n'envoie que ce qui est nécessaire, tronqué aux limites
+      body: JSON.stringify({
+        contenu: contenu.slice(0, MAX_CONTENU),
+        titre:   titre,
+        url_source: url || undefined,
+      }),
+    });
+
+    if (resp.status === 429) {
+      showAlert("Trop de requêtes. Attendez une minute avant de réessayer.");
+      return;
+    }
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      showAlert(data.erreur || `Erreur serveur (${resp.status}). Réessayez.`);
+      return;
+    }
+
+    const data = await resp.json();
+
+    // Validation du verdict reçu (whitelist côté client aussi)
+    if (!VERDICTS_VALIDES.has(data.verdict)) {
+      showAlert("Réponse inattendue du serveur.");
+      return;
+    }
+
+    afficherResultat(data);
+    chargerHistorique();
+    chargerStats();
+
+  } catch (e) {
+    showAlert("Impossible de contacter le serveur. Vérifiez votre connexion.");
+  } finally {
+    document.getElementById("btnAnalyser").disabled = false;
+    document.getElementById("loading").classList.remove("active");
+  }
+}
+
+/* ════════════════════════════════════════════
+   AFFICHAGE DU RÉSULTAT (sans innerHTML)
+   ════════════════════════════════════════════ */
+function afficherResultat(data) {
+  const verdict = data.verdict;
+  const score   = parseInt(data.score_confiance, 10);
+  const col     = COLORS[verdict] || COLORS.INCERTAIN;
+
+  // Badge verdict
+  const badge = document.getElementById("verdictBadge");
+  badge.textContent = `${EMOJI[verdict]} ${verdict}`;
+  badge.className   = "verdict-badge";
+  badge.style.background = col.bg;
+  badge.style.color      = col.fill;
+  badge.style.border     = `1px solid ${col.border}`;
+
+  // Score
+  const scoreEl = document.getElementById("scoreValue");
+  scoreEl.textContent = `${score}%`;
+  scoreEl.style.color = col.fill;
+
+  // Banner
+  document.getElementById("verdictBanner").style.background =
+    `linear-gradient(90deg, ${col.bg} 0%, transparent 100%)`;
+
+  // Barre de progression
+  const fill = document.getElementById("progressFill");
+  fill.style.width      = "0%";
+  fill.style.background = col.fill;
+  setTimeout(() => { fill.style.width = `${score}%`; }, 100);
+
+  // Explication — textContent uniquement (anti-XSS)
+  document.getElementById("explication").textContent = data.explication || "";
+
+  // Points suspects
+  const pts  = Array.isArray(data.points_suspects) ? data.points_suspects : [];
+  const ptEl = document.getElementById("pointsTags");
+  ptEl.textContent = "";
+  document.getElementById("pointsSection").style.display = pts.length ? "block" : "none";
+  pts.slice(0, 5).forEach(p => {
+    const t = document.createElement("span");
+    t.className = "tag";
+    t.appendChild(texte(p)); // textContent safe
+    ptEl.appendChild(t);
+  });
+
+  // Sources recommandées
+  const srcs  = Array.isArray(data.sources_suggerees) ? data.sources_suggerees : [];
+  const srEl  = document.getElementById("sourcesTags");
+  srEl.textContent = "";
+  document.getElementById("sourcesSection").style.display = srcs.length ? "block" : "none";
+  srcs.slice(0, 4).forEach(s => {
+    const t = document.createElement("span");
+    t.className = "tag";
+    t.appendChild(texte(s)); // textContent safe
+    srEl.appendChild(t);
+  });
+
+  document.getElementById("resultat").classList.add("active");
+  document.getElementById("resultat").scrollIntoView({ behavior:"smooth", block:"nearest" });
+}
+
+/* ════════════════════════════════════════════
+   HISTORIQUE (sans innerHTML sur données)
+   ════════════════════════════════════════════ */
+async function chargerHistorique() {
+  const list = document.getElementById("historyList");
+  try {
+    const resp = await fetch("/api/historique");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const items = await resp.json();
+
+    list.textContent = ""; // vide la liste
+
+    if (!Array.isArray(items) || items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.appendChild(texte("Aucune analyse pour le moment."));
+      list.appendChild(empty);
+      return;
+    }
+
+    items.forEach(item => {
+      const verdict = VERDICTS_VALIDES.has(item.verdict) ? item.verdict : "INCERTAIN";
+      const col     = COLORS[verdict];
+      const score   = parseInt(item.score_confiance, 10) || 0;
+
+      const div = document.createElement("div");
+      div.className = "history-item";
+
+      // Badge verdict
+      const vBadge = document.createElement("span");
+      vBadge.className = "history-verdict";
+      vBadge.style.cssText = `background:${col.bg};color:${col.fill};border:1px solid ${col.border}`;
+      vBadge.appendChild(texte(`${EMOJI[verdict]} ${verdict}`));
+      div.appendChild(vBadge);
+
+      // Aperçu texte
+      const txt = document.createElement("span");
+      txt.className = "history-text";
+      txt.appendChild(texte(item.apercu || "(sans titre)"));
+      div.appendChild(txt);
+
+      // Score
+      const sc = document.createElement("span");
+      sc.className = "history-score";
+      sc.style.color = col.fill;
+      sc.appendChild(texte(`${score}%`));
+      div.appendChild(sc);
+
+      // Date
+      const dt = document.createElement("span");
+      dt.className = "history-date";
+      dt.appendChild(texte(item.date_analyse || ""));
+      div.appendChild(dt);
+
+      list.appendChild(div);
+    });
+  } catch (e) {
+    list.textContent = "";
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.appendChild(texte("Historique indisponible (serveur non démarré ?)."));
+    list.appendChild(empty);
+  }
+}
+
+/* ════════════════════════════════════════════
+   STATISTIQUES
+   ════════════════════════════════════════════ */
+async function chargerStats() {
+  try {
+    const resp = await fetch("/api/statistiques");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    // textContent uniquement — pas d'injection possible
+    document.getElementById("statTotal").textContent     = `${data.total_analyses || 0} analyse(s)`;
+    document.getElementById("statVrai").textContent      = `${data.total_vrais || 0} Vrais`;
+    document.getElementById("statFaux").textContent      = `${data.total_faux || 0} Faux`;
+    document.getElementById("statDouteux").textContent   = `${data.total_douteux || 0} Douteux`;
+    document.getElementById("statIncertain").textContent = `${data.total_incertains || 0} Incertains`;
+  } catch { /* silencieux */ }
+}
+
+/* ════════════════════════════════════════════
+   ÉVÉNEMENTS
+   ════════════════════════════════════════════ */
+document.getElementById("btnAnalyser").addEventListener("click", lancerAnalyse);
+
+// Ctrl+Enter pour analyser
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") lancerAnalyse();
+});
+
+/* ════════════════════════════════════════════
+   INIT
+   ════════════════════════════════════════════ */
+chargerHistorique();
+chargerStats();
+</script>
+</body>
+</html>
